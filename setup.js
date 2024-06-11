@@ -6,14 +6,19 @@ function initRoom(roomId, socket) {
   if (!room) {   
     room = {
       initiator: {},
-      participant: {},
+      participant: { id: socket.id },
       ready: 0
     };
   }    
   if (room.ready >= 2) return socket.disconnect();
   room.ready += 1;
+  if (room.ready == 1){
+    room.participant.id = socket.id;
+  }
   rooms.set(roomId, room);
   if (room.ready == 2){
+    room.initiator.id = socket.id;
+    rooms.set(roomId, room);
     socket.emit('negotiation::start');
   }
 }
@@ -56,6 +61,8 @@ module.exports = function (io) {
     socket.on('disconnect', () => {
       let room = rooms.get(roomId);
       if (!room.participant.id && !room.initiator.id){
+        room.participant = {};
+        room.initiator = {};  
         room.ready = room.ready > 0 ? room.ready - 1 : 0;  
       } else {
         const participantId = room.participant.id;
@@ -64,9 +71,11 @@ module.exports = function (io) {
         room.initiator = {};  
         room.ready = room.ready > 0 ? room.ready - 1 : 0;  
         if (socket.id !== participantId && participantId) {
+          room.participant.id = participantId
           io.to(participantId).emit('waiting');
         } 
         if (socket.id !== initiatorId && initiatorId) {
+          room.participant.id = initiatorId
           io.to(initiatorId).emit('waiting');
         }
       }
@@ -81,13 +90,14 @@ module.exports = function (io) {
     });
 
     socket.on("offer", offer => {
-      console.log("send offer ", socket.id);
       if (isRoomReady(socket.context.roomId)) {
+        console.log("send offer ", socket.id);
         // continue
         let room = rooms.get(socket.context.roomId, null);
         room.initiator.id = socket.id;
         room.initiator.offer = offer;
         rooms.set(socket.context.roomId, room);
+        io.to(room.participant.id).emit('offer', offer);
         return;
       }
       socket.emit('waiting');
@@ -95,14 +105,14 @@ module.exports = function (io) {
       // client will send back an 'ready' to trigger initRoom()
     });
 
-    socket.on("anwser", anwser => {
-      console.log("send anwser ", socket.id);
+    socket.on("answer", answer => {
+      console.log("send answer ", socket.id);
       if (isRoomReady(socket.context.roomId)) {
         // continue
         let room = rooms.get(socket.context.roomId, null);
-        rooms.participant.id = socket.id;
-        room.participant.anwser = anwser;
+        room.participant.answer = answer;
         rooms.set(socket.context.roomId, room);
+        io.to(room.initiator.id).emit('answer', answer);
         return;
       }
       socket.emit('waiting');
