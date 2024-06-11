@@ -40,8 +40,6 @@ module.exports = function (io) {
     console.log("room ==> ", room);
     if (room.ready == 2) {
       console.log('start negotiation...');
-        // start negotiation
-      socket.emit('negotiation::start');
     } else if (room.ready < 2) {
       console.log("waiting participant...");
     } else {
