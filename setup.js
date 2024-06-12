@@ -2,21 +2,28 @@ const rooms = new Map();
 // 先不管条件竞争的情况
 
 function initRoom(roomId, socket) { 
+  console.log('room id', roomId);
   let room = rooms.get(roomId, null);
   if (!room) {   
     room = {
+      id: roomId,
       initiator: {},
       participant: { id: socket.id },
       ready: 0
     };
   }    
-  if (room.ready >= 2) return socket.disconnect();
+  if (room.ready >= 2) {
+    socket.emit('error:invalid', 'room is private');
+    return;
+  }
   room.ready += 1;
   if (room.ready == 1){
+    socket.join(roomId);
     room.participant.id = socket.id;
   }
   rooms.set(roomId, room);
   if (room.ready == 2){
+    socket.join(roomId);
     room.initiator.id = socket.id;
     rooms.set(roomId, room);
     socket.emit('negotiation::start');
@@ -31,11 +38,21 @@ function isRoomReady(roomId){
   return true;
 }
 
+function getUsers(room){
+  return [
+    { id: room.initiator.id, name: room.initiator.name },
+    { id: room.participant.id, name: room.participant.name }
+  ];
+}
+
 module.exports = function (io) {
   io.on("connection", (socket) => {
     const { roomId } = socket.handshake.auth;
+    if (!roomId) { 
+      socket.emit('error:invalid', 'room not found');
+      socket.disconnect();
+    }
     console.log("socket connected", socket.id, roomId);
-
     socket.context = {};
     socket.context.roomId = roomId;
     socket.context.username = Math.floor(Math.random() * 10000).toString();
@@ -45,6 +62,7 @@ module.exports = function (io) {
     console.log("room ==> ", room);
     if (room.ready == 2) {
       console.log('start negotiation...');
+      io.to(roomId).emit('users', getUsers(room));
     } else if (room.ready < 2) {
       console.log("waiting participant...");
     } else {
@@ -56,7 +74,7 @@ module.exports = function (io) {
     socket.on('ready', () => {
       console.log('ready ... ', socket.id);
       initRoom(socket.context.roomId, socket);
-    })
+    });
 
     socket.on('disconnect', () => {
       let room = rooms.get(roomId);
@@ -81,12 +99,20 @@ module.exports = function (io) {
       }
 
       rooms.set(roomId, room);
+      io.to(roomId).emit('user::leave', socket.id);
+      socket.leave(roomId);
       console.log('disconnect ... ', socket.id, room );      
-    })
+    });
 
     socket.on("user:setName", name =>{
       console.log("set name ", socket.id, name);
       socket.context.username = name;
+      if (room.initiator.id == socket.id) {
+        room.initiator.name = name;
+      } else if (room.participant.id == socket.id) {
+        room.participant.name = name;
+      }
+      io.to(roomId).emit('users', getUsers(room));
     });
 
     socket.on("offer", offer => {
@@ -124,10 +150,11 @@ module.exports = function (io) {
         let room = rooms.get(socket.context.roomId, null);
         room.initiator.candidates = room.initiator.candidates ?? [];
         room.initiator.candidates.push(candidate);
+        io.to(room.participant.id).emit('candidate', candidate);
         return;
       }
       socket.emit('waiting');
-    })
+    });
 
     socket.on("candidate::participant", candidate => {
       console.log("candidate::participant ", socket.id);
@@ -135,22 +162,11 @@ module.exports = function (io) {
         let room = rooms.get(socket.context.roomId, null);
         room.participant.candidates = room.participant.candidates ?? [];
         room.participant.candidates.push(candidate);
+        io.to(room.initiator.id).emit('candidate', candidate);
         return;
       }
       socket.emit('waiting');
-    })
-
-    // more listeners
-
-
-    // room check
-   //  let room = rooms.get(roomId, null);
-   //  if (!room) {
-   //    rooms.set(roomId, { initiator: null, participant: null });
-   //    socket.emit('cmd::initiator');
-   //  } else {
-   //   !room.initiator ? socket.emit('cmd::initiator') : socket.emit('cmd::participant');
-   // }
+    });
   });
 };
 
