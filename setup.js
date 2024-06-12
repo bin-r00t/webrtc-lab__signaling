@@ -11,6 +11,7 @@ function initRoom(roomId, socket) {
       participant: { id: socket.id },
       ready: 0
     };
+    socket.context.isInitiator = false;
   }    
   if (room.ready >= 2) {
     socket.emit('error:invalid', 'room is private');
@@ -20,11 +21,13 @@ function initRoom(roomId, socket) {
   if (room.ready == 1){
     socket.join(roomId);
     room.participant.id = socket.id;
+    socket.context.isInitiator = false;
   }
   rooms.set(roomId, room);
   if (room.ready == 2){
     socket.join(roomId);
     room.initiator.id = socket.id;
+    socket.context.isInitiator = true;
     rooms.set(roomId, room);
     socket.emit('negotiation::start');
   }
@@ -167,6 +170,26 @@ module.exports = function (io) {
       }
       socket.emit('waiting');
     });
+
+    // 一端关闭通话
+    socket.on("close-communication", role => {
+      if (!role || role.trim()=='') return;
+      if (role == 'initiator' && socket.context.isInitiator && room.participant.id) {
+        io.to(room.participant.id).emit('close-communication');
+        return;
+      }
+      if (role == 'initiator' && !socket.context.isInitiator) {
+        socket.emit('close-communication');
+        return;
+      }
+      if (role == 'participant' && socket.context.isInitiator && room.participant.id) {
+        socket.emit('close-communication');
+        return;
+      }
+      if (role == 'participant' && !socket.context.isInitiator && room.initiator.id) {
+        io.to(room.initiator.id).emit('close-communication');
+      }
+    })
   });
 };
 
